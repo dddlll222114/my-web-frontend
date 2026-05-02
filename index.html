@@ -1,17 +1,17 @@
-<!DOCTYPE html>
+
 <html lang="zh-CN">
-<head>
+<头>
     <meta charset="UTF-8">
     <title>在线投票系统</title>
-    <style>
-        body { 
-            max-width: 800px; 
-            margin: 30px auto; 
-            padding: 20px; 
-            font-family: "微软雅黑", sans-serif; 
-            background-color: #f8f9fa;
+    <样式>
+        身体 { 
+            最大宽度：800像素；
+            边距：30像素 自动；
+            
+            字体："微软雅黑"，无衬线；
+            背景颜色: #f8f9fa;
         }
-        .box { 
+
             border: 1px solid #dee2e6; 
             padding: 20px; 
             margin: 15px 0; 
@@ -21,19 +21,19 @@
         }
         button { 
             padding: 8px 16px; 
-            margin: 5px; 
-            cursor: pointer; 
-            background: #0d6efd; 
-            color: white; 
-            border: none; 
-            border-radius: 5px; 
-            transition: background-color 0.2s;
+            边距：5像素；
+            光标：指针；
+            背景: #0d6efd; 
+            颜色：白色；
+            边框：无；
+            边框半径：5像素；
+            过渡：背景颜色 0.2秒;
         }
-        button:hover {
-            background-color: #0b5ed7;
+        按钮:悬停 {
+            背景颜色: #0b5ed7;
         }
-        input {
-            width: 100%; 
+        输入 {
+            宽度：100%；
             padding: 8px; 
             margin: 5px 0; 
             border: 1px solid #ced4da;
@@ -67,7 +67,7 @@
         // --------------------------
         // 【关键】把这里替换成你的 Vercel 后端地址
         // --------------------------
-        const SERVER_URL = "https://你的项目名.vercel.app/api/index";
+        const SERVER_URL = "https:my-web-frontend-5h48.vercel.app";
 
         // 页面加载时自动获取投票列表
         window.onload = function() {

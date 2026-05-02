@@ -1,140 +1,80 @@
-
+<!DOCTYPE html>
 <html lang="zh-CN">
-<头>
+<head>
     <meta charset="UTF-8">
-    <title>在线投票系统</title>
-    <样式>
-        身体 { 
-            最大宽度：800像素；
-            边距：30像素 自动；
-            
-            字体："微软雅黑"，无衬线；
-            背景颜色: #f8f9fa;
-        }
-
-            border: 1px solid #dee2e6; 
-            padding: 20px; 
-            margin: 15px 0; 
-            border-radius: 8px; 
-            background-color: white;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        }
-        button { 
-            padding: 8px 16px; 
-            边距：5像素；
-            光标：指针；
-            背景: #0d6efd; 
-            颜色：白色；
-            边框：无；
-            边框半径：5像素；
-            过渡：背景颜色 0.2秒;
-        }
-        按钮:悬停 {
-            背景颜色: #0b5ed7;
-        }
-        输入 {
-            宽度：100%；
-            padding: 8px; 
-            margin: 5px 0; 
-            border: 1px solid #ced4da;
-            border-radius: 4px;
-            box-sizing: border-box;
-        }
-        h1, h3 {
-            color: #212529;
-        }
+    <title>任意选项投票系统</title>
+    <style>
+        body { max-width: 800px; margin: 30px auto; padding: 20px; font-family: "微软雅黑", sans-serif; background: #f8f9fa; }
+        .box { border: 1px solid #dee2e6; padding: 20px; margin: 15px 0; border-radius: 8px; background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        button { padding: 8px 16px; margin: 5px; cursor: pointer; background: #0d6efd; color: white; border: none; border-radius: 5px; }
+        button:hover { background: #0b5ed7; }
+        .option-row { display: flex; gap: 10px; margin: 5px 0; }
+        .option-row input { flex: 1; padding: 8px; border: 1px solid #ced4da; border-radius: 4px; }
+        .remove-btn { background: #dc3545; }
     </style>
 </head>
 <body>
-    <h1 style="text-align: center; color: #0d6efd;">在线投票系统</h1>
+    <h1 style="text-align: center; color: #0d6efd;">任意选项投票系统</h1>
 
     <div class="box">
-        <h3>创建新投票</h3>
-        <input type="text" id="title" placeholder="请输入投票标题（例如：周末去哪玩？）">
-        <input type="text" id="opt1" placeholder="选项1">
-        <input type="text" id="opt2" placeholder="选项2">
+        <h3>创建投票（可添加任意数量选项）</h3>
+        <input type="text" id="topic" placeholder="请输入投票标题（例如：周末去哪玩？）" style="width: 100%; padding: 8px; margin-bottom: 10px;">
+        
+        <div id="options-container">
+            <div class="option-row">
+                <input type="text" placeholder="选项1">
+                <button class="remove-btn" onclick="removeOption(this)">删除</button>
+            </div>
+            <div class="option-row">
+                <input type="text" placeholder="选项2">
+                <button class="remove-btn" onclick="removeOption(this)">删除</button>
+            </div>
+        </div>
+
+        <button onclick="addOption()">+ 添加选项</button>
         <button onclick="createVote()">创建投票</button>
     </div>
 
     <div class="box">
         <h3>投票列表</h3>
-        <div id="voteArea">
-            <p style="color: #6c757d; text-align: center;">正在加载投票列表...</p>
-        </div>
+        <div id="voteList"></div>
     </div>
 
     <script>
-        // --------------------------
-        // 【关键】把这里替换成你的 Vercel 后端地址
-        // --------------------------
-        const SERVER_URL = "https:my-web-frontend-5h48.vercel.app";
+        // 这里填你的后端地址
+        const SERVER_URL = "https://你的后端地址";
 
-        // 页面加载时自动获取投票列表
-        window.onload = function() {
-            loadVotes();
-        };
+        // 动态添加选项
+        function addOption() {
+            const container = document.getElementById('options-container');
+            const index = container.children.length + 1;
+            const row = document.createElement('div');
+            row.className = 'option-row';
+            row.innerHTML = `
+                <input type="text" placeholder="选项${index}">
+                <button class="remove-btn" onclick="removeOption(this)">删除</button>
+            `;
+            container.appendChild(row);
+        }
 
-        // 1. 加载所有投票
-        async function loadVotes() {
-            try {
-                const res = await fetch(`${SERVER_URL}/list`);
-                if (!res.ok) throw new Error("获取投票列表失败");
-                const votes = await res.json();
-                renderVotes(votes);
-            } catch (err) {
-                document.getElementById('voteArea').innerHTML = 
-                    `<p style="color: red; text-align: center;">加载失败：${err.message}</p>`;
+        // 删除选项
+        function removeOption(btn) {
+            const container = document.getElementById('options-container');
+            if (container.children.length > 1) {
+                btn.parentElement.remove();
+            } else {
+                alert("至少保留1个选项哦！");
             }
         }
 
-        // 2. 渲染投票列表
-        function renderVotes(votes) {
-            const area = document.getElementById('voteArea');
-            if (votes.length === 0) {
-                area.innerHTML = `<p style="color: #6c757d; text-align: center;">暂无投票，快去创建一个吧！</p>`;
-                return;
-            }
-
-            let html = "";
-            votes.forEach(vote => {
-                html += `
-                    <div style="margin: 10px 0; padding: 10px; border: 1px solid #eee; border-radius: 5px;">
-                        <h4 style="margin: 0 0 10px 0; color: #212529;">${vote.topic}</h4>
-                        ${vote.options.map((opt, i) => `
-                            <p style="margin: 5px 0; color: #495057;">
-                                ${opt}: <span style="font-weight: bold; color: #0d6efd;">${vote.counts[i]}</span> 票
-                                <button onclick="submitVote('${vote.id}', ${i})">投票</button>
-                            </p>
-                        `).join('')}
-                    </div>
-                `;
-            });
-            area.innerHTML = html;
-        }
-
-        // 3. 提交投票
-        async function submitVote(voteId, optIndex) {
-            try {
-                await fetch(`${SERVER_URL}/vote`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ voteId, optIndex })
-                });
-                loadVotes(); // 投票后刷新列表
-                alert("投票成功！");
-            } catch (err) {
-                alert("投票失败：" + err.message);
-            }
-        }
-
-        // 4. 创建新投票
+        // 创建投票
         async function createVote() {
-            const title = document.getElementById('title').value.trim();
-            const opt1 = document.getElementById('opt1').value.trim();
-            const opt2 = document.getElementById('opt2').value.trim();
+            const topic = document.getElementById('topic').value.trim();
+            const optionInputs = document.querySelectorAll('#options-container input');
+            const options = Array.from(optionInputs).map(input => input.value.trim()).filter(v => v);
 
-            if (!title || !opt1 || !opt2) {
-                alert("请填写完整的投票标题和两个选项！");
+            if (!topic || options.length < 1) {
+                alert("请填写投票标题和至少1个选项！");
                 return;
             }
 
@@ -142,18 +82,72 @@
                 await fetch(`${SERVER_URL}/create`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ title, options: [opt1, opt2] })
+                    body: JSON.stringify({ topic, options })
                 });
-                // 清空输入框
-                document.getElementById('title').value = "";
-                document.getElementById('opt1').value = "";
-                document.getElementById('opt2').value = "";
-                loadVotes(); // 创建后刷新列表
+                // 清空表单并刷新列表
+                document.getElementById('topic').value = '';
+                document.getElementById('options-container').innerHTML = `
+                    <div class="option-row">
+                        <input type="text" placeholder="选项1">
+                        <button class="remove-btn" onclick="removeOption(this)">删除</button>
+                    </div>
+                    <div class="option-row">
+                        <input type="text" placeholder="选项2">
+                        <button class="remove-btn" onclick="removeOption(this)">删除</button>
+                    </div>
+                `;
+                loadVotes();
                 alert("投票创建成功！");
             } catch (err) {
                 alert("创建失败：" + err.message);
             }
         }
+
+        // 加载投票列表
+        async function loadVotes() {
+            const res = await fetch(`${SERVER_URL}/list`);
+            const votes = await res.json();
+            const listEl = document.getElementById('voteList');
+            listEl.innerHTML = '';
+
+            if (votes.length === 0) {
+                listEl.innerHTML = "<p>暂无投票，快去创建一个吧！</p>";
+                return;
+            }
+
+            votes.forEach(vote => {
+                const div = document.createElement('div');
+                div.style.margin = '10px 0';
+                div.innerHTML = `
+                    <h4>${vote.topic}</h4>
+                    ${vote.options.map((opt, i) => `
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin: 5px 0;">
+                            <span>${opt}: <strong>${vote.counts[i]}</strong> 票</span>
+                            <button onclick="submitVote('${vote.id}', ${i})">投票</button>
+                        </div>
+                    `).join('')}
+                `;
+                listEl.appendChild(div);
+            });
+        }
+
+        // 提交投票
+        async function submitVote(voteId, optIndex) {
+            try {
+                await fetch(`${SERVER_URL}/vote`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ voteId, optIndex })
+                });
+                loadVotes();
+                alert("投票成功！");
+            } catch (err) {
+                alert("投票失败：" + err.message);
+            }
+        }
+
+        // 页面加载时自动拉取投票列表
+        window.onload = loadVotes;
     </script>
 </body>
 </html>

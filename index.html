@@ -1,0 +1,406 @@
+#pragma once
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+
+#pragma warning(disable:4996)
+#include <windows.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <winsock2.h>
+#include <math.h>
+
+#pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "gdi32.lib")
+
+#define BUF_SIZE 1024
+#define SERVER_IP "127.0.0.1"
+#define SERVER_PORT 8888
+
+#define ID_LIST_VOTE 1001
+#define ID_BTN_CREATE 1002
+#define ID_BTN_VOTE 1003
+#define ID_BTN_QUERY 1004
+#define ID_EDIT_VOTEID 1005
+#define ID_EDIT_TOPIC 1006
+#define ID_EDIT_OPTIONS 1007
+#define ID_EDIT_DEADLINE 1008
+#define ID_EDIT_NICK 1009
+#define ID_COMBO_OPTIONS 1010
+#define ID_STATIC_RESULT 1011
+
+HWND hWnd;
+SOCKET client_sock;
+char current_vote_id[32] = { 0 };
+int current_counts[10] = { 0 };
+int current_option_count = 0;
+char vote_status[32] = { 0 };
+char option_names[10][64] = { 0 };
+
+// 网络线程：连接服务端并获取投票列表
+DWORD WINAPI NetThread(LPVOID param) {
+    WSADATA wsaData;
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
+
+    client_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    struct sockaddr_in server_addr = { 0 };
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.S_un.S_addr = inet_addr(SERVER_IP);
+    server_addr.sin_port = htons(SERVER_PORT);
+
+    if (connect(client_sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) == SOCKET_ERROR) {
+        MessageBoxA(NULL, "连接服务端失败，请先启动服务端！", "错误", MB_ICONERROR);
+        exit(1);
+    }
+
+    // 发送LIST指令，获取所有投票
+    char buf[BUF_SIZE] = { 0 };
+    send(client_sock, "LIST", 4, 0);
+    int len = recv(client_sock, buf, BUF_SIZE - 1, 0);
+    if (len > 0) buf[len] = '\0';
+
+    if (strstr(buf, "LIST ") != NULL) {
+        char* list_str = buf + 5;
+        char* vote_item = strtok(list_str, ",");
+        while (vote_item != NULL) {
+            char vote_id[32] = { 0 };
+            char topic[128] = { 0 };
+            sscanf_s(vote_item, "%[^|]|%s", vote_id, (unsigned)_countof(vote_id), topic, (unsigned)_countof(topic));
+            char display_text[160] = { 0 };
+            sprintf_s(display_text, "%s (%s)", topic, vote_id);
+            SendDlgItemMessageA(hWnd, ID_LIST_VOTE, LB_ADDSTRING, 0, (LPARAM)display_text);
+            vote_item = strtok(NULL, ",");
+        }
+    }
+    return 0;
+}
+
+// 绘制投票结果：饼图+文字分离版
+void DrawPieChart(HWND hdcWnd) {
+    PAINTSTRUCT ps;
+    HDC hdc = BeginPaint(hdcWnd, &ps);
+    RECT rect;
+    GetClientRect(hdcWnd, &rect);
+    int total_width = rect.right - rect.left;
+    int total_height = rect.bottom - rect.top;
+
+    // 1. 饼图画在左侧，缩小半径
+    int pie_cx = total_width / 4;
+    int pie_cy = total_height / 2;
+    int r = min(pie_cx, total_height) - 15;
+
+    int total = 0;
+    for (int i = 0; i < current_option_count; i++)
+        total += current_counts[i];
+
+    if (total == 0) {
+        TextOutA(hdc, pie_cx - 60, pie_cy, "暂无投票数据", 12);
+    }
+    else {
+        COLORREF colors[] = {
+            RGB(255,100,100), RGB(100,255,100), RGB(100,100,255),
+            RGB(255,255,100), RGB(100,100,100), RGB(200,200,200)
+        };
+
+        int start_angle = 0;
+        for (int i = 0; i < current_option_count; i++) {
+            int angle = (int)(current_counts[i] * 360.0 / total);
+            HBRUSH brush = CreateSolidBrush(colors[i % 6]);
+            SelectObject(hdc, brush);
+
+            Pie(hdc, pie_cx - r, pie_cy - r, pie_cx + r, pie_cy + r,
+                pie_cx + (int)(r * cos(start_angle * 3.14159 / 180)),
+                pie_cy - (int)(r * sin(start_angle * 3.14159 / 180)),
+                pie_cx + (int)(r * cos((start_angle + angle) * 3.14159 / 180)),
+                pie_cy - (int)(r * sin((start_angle + angle) * 3.14159 / 180)));
+
+            DeleteObject(brush);
+            start_angle += angle;
+        }
+    }
+
+    // 2. 文字画在右侧，不重叠
+    int text_x = pie_cx + r + 20;
+    int text_y = 15;
+    char text[256] = { 0 };
+
+    sprintf_s(text, "状态：%s", vote_status);
+    TextOutA(hdc, text_x, text_y, text, (int)strlen(text));
+    text_y += 25;
+
+    for (int i = 0; i < current_option_count; i++) {
+        sprintf_s(text, "%s : %d 票", option_names[i], current_counts[i]);
+        TextOutA(hdc, text_x, text_y, text, (int)strlen(text));
+        text_y += 25;
+    }
+
+    EndPaint(hdcWnd, &ps);
+}
+
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_CREATE: {
+        hWnd = hwnd;
+        CreateThread(NULL, 0, NetThread, NULL, 0, NULL);
+
+        // 控件创建（和之前一致）
+        CreateWindowExA(0, "LISTBOX", "", WS_CHILD | WS_VISIBLE | LBS_NOTIFY | WS_BORDER,
+            20, 20, 220, 150, hwnd, (HMENU)ID_LIST_VOTE, NULL, NULL);
+
+        CreateWindowExA(0, "STATIC", "投票ID:", WS_CHILD | WS_VISIBLE, 260, 20, 60, 20, hwnd, NULL, NULL, NULL);
+        HWND hEditVoteId = CreateWindowExA(0, "EDIT", "",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 320, 20, 200, 20, hwnd, (HMENU)ID_EDIT_VOTEID, NULL, NULL);
+        SendMessageA(hEditVoteId, EM_SETLIMITTEXT, 128, 0);
+
+        CreateWindowExA(0, "STATIC", "主题:", WS_CHILD | WS_VISIBLE, 260, 50, 60, 20, hwnd, NULL, NULL, NULL);
+        HWND hEditTopic = CreateWindowExA(0, "EDIT", "",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 320, 50, 200, 20, hwnd, (HMENU)ID_EDIT_TOPIC, NULL, NULL);
+        SendMessageA(hEditTopic, EM_SETLIMITTEXT, 256, 0);
+
+        CreateWindowExA(0, "STATIC", "选项(逗号分隔):", WS_CHILD | WS_VISIBLE, 260, 80, 100, 20, hwnd, NULL, NULL, NULL);
+        HWND hEditOptions = CreateWindowExA(0, "EDIT", "",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 360, 80, 220, 20, hwnd, (HMENU)ID_EDIT_OPTIONS, NULL, NULL);
+        SendMessageA(hEditOptions, EM_SETLIMITTEXT, 2048, 0);
+
+        CreateWindowExA(0, "STATIC", "截止时间:", WS_CHILD | WS_VISIBLE, 260, 110, 100, 20, hwnd, NULL, NULL, NULL);
+        HWND hEditDeadline = CreateWindowExA(0, "EDIT", "",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 260, 130, 260, 20, hwnd, (HMENU)ID_EDIT_DEADLINE, NULL, NULL);
+        SendMessageA(hEditDeadline, EM_SETLIMITTEXT, 64, 0);
+
+        CreateWindowExA(0, "BUTTON", "创建投票", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 260, 160, 100, 30, hwnd, (HMENU)ID_BTN_CREATE, NULL, NULL);
+
+        CreateWindowExA(0, "STATIC", "昵称:", WS_CHILD | WS_VISIBLE, 20, 190, 60, 20, hwnd, NULL, NULL, NULL);
+        HWND hEditNick = CreateWindowExA(0, "EDIT", "",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL, 80, 190, 120, 20, hwnd, (HMENU)ID_EDIT_NICK, NULL, NULL);
+        SendMessageA(hEditNick, EM_SETLIMITTEXT, 64, 0);
+
+        CreateWindowExA(0, "STATIC", "选择选项:", WS_CHILD | WS_VISIBLE, 20, 220, 80, 20, hwnd, NULL, NULL, NULL);
+        HWND hCombo = CreateWindowExA(0, "COMBOBOX", "",
+            WS_CHILD | WS_VISIBLE | CBS_DROPDOWNLIST | CBS_AUTOHSCROLL | WS_BORDER, 100, 220, 180, 100, hwnd, (HMENU)ID_COMBO_OPTIONS, NULL, NULL);
+        SendMessageA(hCombo, CB_SETDROPPEDWIDTH, 250, 0);
+
+        CreateWindowExA(0, "BUTTON", "提交投票", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 20, 260, 100, 30, hwnd, (HMENU)ID_BTN_VOTE, NULL, NULL);
+        CreateWindowExA(0, "BUTTON", "查看结果", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 130, 260, 100, 30, hwnd, (HMENU)ID_BTN_QUERY, NULL, NULL);
+
+        CreateWindowExA(0, "STATIC", "投票结果:", WS_CHILD | WS_VISIBLE, 260, 200, 80, 20, hwnd, NULL, NULL, NULL);
+        CreateWindowExA(0, "STATIC", "", WS_CHILD | WS_VISIBLE | WS_BORDER | SS_CENTER, 260, 220, 300, 160, hwnd, (HMENU)ID_STATIC_RESULT, NULL, NULL);
+        break;
+    }
+
+    case WM_COMMAND: {
+        // 选中投票：同时加载下拉框+饼图数据（补全了之前弄丢的下拉框加载代码）
+        if (LOWORD(wParam) == ID_LIST_VOTE && HIWORD(wParam) == LBN_SELCHANGE) {
+            int sel = SendDlgItemMessageA(hwnd, ID_LIST_VOTE, LB_GETCURSEL, 0, 0);
+            char display_text[160] = { 0 };
+            SendDlgItemMessageA(hwnd, ID_LIST_VOTE, LB_GETTEXT, sel, (LPARAM)display_text);
+
+            // 解析投票ID
+            char* id_start = strstr(display_text, "(");
+            char* id_end = strstr(display_text, ")");
+            if (id_start && id_end) {
+                *id_end = '\0';
+                strcpy(current_vote_id, id_start + 1);
+            }
+
+            // 发送QUERY指令
+            char req[BUF_SIZE] = { 0 };
+            sprintf_s(req, "QUERY %s", current_vote_id);
+            send(client_sock, req, (int)strlen(req), 0);
+
+            char resp[BUF_SIZE] = { 0 };
+            int len = recv(client_sock, resp, BUF_SIZE - 1, 0);
+            if (len > 0) resp[len] = '\0';
+
+            if (strstr(resp, "RESULT ")) {
+                char* p = resp + 7;
+                p = strchr(p, ' '); if (p) p++;
+                p = strchr(p, ' '); if (p) p++;
+                char* opt_part = p;
+                char* status = strchr(opt_part, ' ');
+                if (status) *status = '\0';
+
+                // ? 补全：先清空下拉框，再加载选项
+                SendDlgItemMessageA(hwnd, ID_COMBO_OPTIONS, CB_RESETCONTENT, 0, 0);
+                current_option_count = 0;
+
+                char* opt = strtok(opt_part, ",");
+                while (opt != NULL && current_option_count < 10) {
+                    char name[64] = { 0 };
+                    int cnt = 0;
+                    // 解析选项名和票数
+                    if (sscanf_s(opt, "%[^:]:%d", name, (unsigned)_countof(name), &cnt) == 2) {
+                        // 1. 加到下拉框里（补全了之前弄丢的代码）
+                        SendDlgItemMessageA(hwnd, ID_COMBO_OPTIONS, CB_ADDSTRING, 0, (LPARAM)name);
+                        // 2. 保存到全局变量，用于饼图绘制
+                        strcpy(option_names[current_option_count], name);
+                        current_counts[current_option_count] = cnt;
+                        current_option_count++;
+                    }
+                    opt = strtok(NULL, ",");
+                }
+
+                // 保存投票状态
+                if (status) {
+                    strcpy(vote_status, status + 1);
+                }
+                else {
+                    strcpy(vote_status, "未知");
+                }
+
+                // 触发饼图重绘
+                InvalidateRect(GetDlgItem(hwnd, ID_STATIC_RESULT), NULL, TRUE);
+            }
+        }
+        // 创建投票（和之前一致）
+        else if (LOWORD(wParam) == ID_BTN_CREATE) {
+            char vid[64] = { 0 }, top[128] = { 0 }, opts[2048] = { 0 }, ddl[64] = { 0 };
+            GetDlgItemTextA(hwnd, ID_EDIT_VOTEID, vid, 64);
+            GetDlgItemTextA(hwnd, ID_EDIT_TOPIC, top, 128);
+            GetDlgItemTextA(hwnd, ID_EDIT_OPTIONS, opts, 2048);
+            GetDlgItemTextA(hwnd, ID_EDIT_DEADLINE, ddl, 64);
+
+            if (!*vid || !*top || !*opts || !*ddl) {
+                MessageBoxA(hwnd, "请填写完整信息", "提示", MB_ICONWARNING);
+                break;
+            }
+
+            char req[BUF_SIZE] = { 0 };
+            sprintf_s(req, "CREATE %s %s %s %s", vid, top, opts, ddl);
+            send(client_sock, req, (int)strlen(req), 0);
+
+            char resp[BUF_SIZE] = { 0 };
+            int len = recv(client_sock, resp, BUF_SIZE - 1, 0);
+            if (len > 0) resp[len] = '\0';
+
+            if (strstr(resp, "CREATE_OK")) {
+                MessageBoxA(hwnd, "创建成功！", "提示", MB_OK);
+                SendDlgItemMessageA(hwnd, ID_LIST_VOTE, LB_RESETCONTENT, 0, 0);
+                send(client_sock, "LIST", 4, 0);
+                len = recv(client_sock, resp, BUF_SIZE - 1, 0);
+                if (len > 0) resp[len] = '\0';
+                if (strstr(resp, "LIST ")) {
+                    char* list_str = resp + 5;
+                    char* vote_item = strtok(list_str, ",");
+                    while (vote_item != NULL) {
+                        char vote_id[32] = { 0 }, topic[128] = { 0 };
+                        sscanf_s(vote_item, "%[^|]|%s", vote_id, (unsigned)_countof(vote_id), topic, (unsigned)_countof(topic));
+                        char display_text[160] = { 0 };
+                        sprintf_s(display_text, "%s (%s)", topic, vote_id);
+                        SendDlgItemMessageA(hwnd, ID_LIST_VOTE, LB_ADDSTRING, 0, (LPARAM)display_text);
+                        vote_item = strtok(NULL, ",");
+                    }
+                }
+            }
+            else {
+                MessageBoxA(hwnd, resp, "失败", MB_ICONERROR);
+            }
+        }
+        // 提交投票（和之前一致）
+        else if (LOWORD(wParam) == ID_BTN_VOTE) {
+            char nick[64] = { 0 };
+            GetDlgItemTextA(hwnd, ID_EDIT_NICK, nick, 64);
+            if (!*nick) strcpy_s(nick, "匿名");
+
+            int sel = SendDlgItemMessageA(hwnd, ID_COMBO_OPTIONS, CB_GETCURSEL, 0, 0);
+            if (sel < 0) {
+                MessageBoxA(hwnd, "请先选择选项", "提示", 0);
+                break;
+            }
+
+            char opt[64] = { 0 };
+            SendDlgItemMessageA(hwnd, ID_COMBO_OPTIONS, CB_GETLBTEXT, sel, (LPARAM)opt);
+
+            char req[BUF_SIZE] = { 0 };
+            sprintf_s(req, "VOTE %s %s %s", current_vote_id, opt, nick);
+            send(client_sock, req, (int)strlen(req), 0);
+
+            char resp[BUF_SIZE] = { 0 };
+            int len = recv(client_sock, resp, BUF_SIZE - 1, 0);
+            if (len > 0) resp[len] = '\0';
+            MessageBoxA(hwnd, resp, "结果", 0);
+        }
+        // 查看结果（和之前一致）
+        else if (LOWORD(wParam) == ID_BTN_QUERY) {
+            char req[BUF_SIZE] = { 0 };
+            sprintf_s(req, "QUERY %s", current_vote_id);
+            send(client_sock, req, (int)strlen(req), 0);
+
+            char resp[BUF_SIZE] = { 0 };
+            int len = recv(client_sock, resp, BUF_SIZE - 1, 0);
+            if (len > 0) resp[len] = '\0';
+
+            if (strstr(resp, "RESULT ")) {
+                char* p = resp + 7;
+                p = strchr(p, ' '); if (p) p++;
+                p = strchr(p, ' '); if (p) p++;
+                char* opt_part = p;
+                char* status = strchr(opt_part, ' ');
+                if (status) *status = '\0';
+
+                current_option_count = 0;
+                char* opt = strtok(opt_part, ",");
+                while (opt != NULL && current_option_count < 10) {
+                    char name[64] = { 0 };
+                    int cnt = 0;
+                    if (sscanf_s(opt, "%[^:]:%d", name, (unsigned)_countof(name), &cnt) == 2) {
+                        strcpy(option_names[current_option_count], name);
+                        current_counts[current_option_count] = cnt;
+                        current_option_count++;
+                    }
+                    opt = strtok(NULL, ",");
+                }
+
+                if (status) {
+                    strcpy(vote_status, status + 1);
+                }
+                else {
+                    strcpy(vote_status, "未知");
+                }
+
+                InvalidateRect(GetDlgItem(hwnd, ID_STATIC_RESULT), NULL, TRUE);
+            }
+        }
+        break;
+    }
+
+    case WM_PAINT:
+        DrawPieChart(GetDlgItem(hwnd, ID_STATIC_RESULT));
+        break;
+
+    case WM_DESTROY:
+        closesocket(client_sock);
+        WSACleanup();
+        PostQuitMessage(0);
+        break;
+
+    default:
+        return DefWindowProcA(hwnd, msg, wParam, lParam);
+    }
+    return 0;
+}
+
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrev, LPSTR cmd, int nShow) {
+    WNDCLASSEXA wc = { 0 };
+    wc.cbSize = sizeof(WNDCLASSEXA);
+    wc.lpfnWndProc = WndProc;
+    wc.hInstance = hInstance;
+    wc.lpszClassName = "VoteClient";
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+
+    RegisterClassExA(&wc);
+
+    HWND hwnd = CreateWindowExA(0, "VoteClient", "在线投票系统",
+        WS_OVERLAPPEDWINDOW, 100, 100, 700, 450,
+        NULL, NULL, hInstance, NULL);
+
+    ShowWindow(hwnd, nShow);
+    UpdateWindow(hwnd);
+
+    MSG msg;
+    while (GetMessage(&msg, NULL, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
+    return 0;
+}
